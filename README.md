@@ -1,6 +1,6 @@
-# Synchronous FIFO in SystemVerilog
+# Parameterized Synchronous FIFO in SystemVerilog
 
-A parameterized single-clock FIFO, verified with a class-based layered SystemVerilog testbench. The testbench uses constrained-random stimulus, a scoreboard with a queue reference model, SystemVerilog Assertions bound into the DUT, and functional coverage.
+A single-clock FIFO (first-in, first-out buffer) with full/empty flags and overflow/underflow protection, verified with a self-checking SystemVerilog testbench.
 
 ## Design (`rtl/sync_fifo.sv`)
 
@@ -8,13 +8,6 @@ A parameterized single-clock FIFO, verified with a class-based layered SystemVer
 | :--- | :--- | :--- |
 | `DATA_WIDTH` | 8 | Word width |
 | `ADDR_WIDTH` | 4 | Address width; `DEPTH = 2**ADDR_WIDTH` (16) |
-
-* **Full/empty detection:** the read and write pointers are `ADDR_WIDTH+1` bits wide.
-  * **Empty:** the two pointers are equal.
-  * **Full:** the address bits match but the MSBs differ, meaning the write pointer has wrapped once more than the read pointer.
-* **Overflow and underflow protection:** a write is ignored while full, and a read is ignored while empty.
-* **First-word fall-through read:** `rdata` always shows the head entry and is valid whenever `empty` is low.
-* **Asynchronous active-low reset** on the pointers.
 
 ```
           +--------------------+
@@ -26,101 +19,95 @@ A parameterized single-clock FIFO, verified with a class-based layered SystemVer
           +--------------------+
 ```
 
-## Testbench (`tb/sync_fifo_tb.sv`)
+* **Full/empty detection:** the read and write pointers have one extra bit.
+  * **Empty:** the two pointers are equal.
+  * **Full:** the address bits match but the extra bit differs, meaning the write pointer has wrapped once more than the read pointer.
+* **Overflow protection:** a write is ignored while the FIFO is full.
+* **Underflow protection:** a read is ignored while the FIFO is empty.
+* **First-word fall-through:** `rdata` always shows the oldest entry whenever `empty` is low.
+* **Asynchronous active-low reset** on the pointers.
 
-```
- generator --mailbox--> driver --> [ fifo_if ] --> DUT
-                                        |            ^
-                                     monitor      fifo_sva (bind)
-                                        |
-                                   scoreboard (queue model)
-```
+## Testbench (`tb/sync_fifo_tb_simple.sv`)
 
-* **`fifo_if`:** an interface with separate driver and monitor clocking blocks, so stimulus and sampling are race-free.
-* **`fifo_txn`:** randomized `wr_en`, `rd_en` and `data`.
-  * The `dist` weights for `wr_en` and `rd_en` are adjustable at run time.
-  * The data distribution biases toward the corner values `00` and `FF`.
-* **Driver:** deliberately drives writes while full and reads while empty, to exercise the protection logic.
-* **Monitor and scoreboard:** every accepted write is pushed into a queue, and every accepted read is compared against the queue head.
-* **Assertions (`fifo_sva`):** bound into the DUT with `bind`. They check that:
-  * the write pointer never moves while full;
-  * the read pointer never moves while empty;
-  * `full` and `empty` are never high at the same time;
-  * occupancy never exceeds `DEPTH`;
-  * `rdata` never carries X while the FIFO is not empty.
+The testbench checks itself and prints PASS or FAIL, so you don't need to read waveforms to know the result.
 
-  Cover properties confirm that full, empty, and read+write-while-full were all reached.
-* **Functional coverage:**
-  * Crosses of write × full, read × empty, and write × read.
-  * Fill-level bins: empty, low, mid, high and full.
-* **Test phases:**
+* **Stimulus:** one task, `cycle(write, read, data)`, drives the inputs on the falling clock edge. Each test is a loop of `cycle(...)` calls.
+* **Reference model:** a SystemVerilog queue holds what the FIFO *should* contain. Every accepted write is pushed into it, and every accepted read is compared against its oldest entry.
+* **Flag checks:** `check_flags()` compares `full` and `empty` with the size of the reference model.
+* **Assertions:**
+  * `full` and `empty` are never high at the same time.
+  * A write while full does not move the write pointer.
 
-  | Phase | Write % | Read % | Cycles | Purpose |
-  | :--- | :--- | :--- | :--- | :--- |
-  | Fill | 90 | 15 | 200 | Reach full |
-  | Drain | 15 | 90 | 200 | Reach empty |
-  | Random | 50 | 50 | 400 | Balanced traffic |
-  | Flush | 0 | 100 | 50 | Empty the FIFO |
+### Tests
 
-  The test passes only if there are no scoreboard errors and the model queue is empty at the end.
+| # | Test | What it checks |
+| :--- | :--- | :--- |
+| 1 | Fill | Write 16 entries, `full` goes high |
+| 2 | Overflow | A write while full is ignored |
+| 3 | Drain | Read 16 entries in the correct order, `empty` goes high |
+| 4 | Underflow | A read while empty is ignored |
+| 5 | Simultaneous read/write | Level stays the same, data stays in order |
+| 6 | Random traffic | 300 cycles of random reads and writes, then drain and check every byte |
 
 ### Bug injection
-Compiling with `+define+INJECT_BUG` removes the overflow protection, so writes are accepted while the FIFO is full. The `a_no_wr_when_full` assertion and the scoreboard both catch it, which shows the testbench can detect a real design fault.
+
+Compiling with `+define+INJECT_BUG` removes the overflow protection, so writes are accepted while the FIFO is full. The testbench then reports data mismatches, flag errors and assertion failures, which shows it really catches design bugs.
 
 ## Results (Synopsys VCS X-2025.06-SP1)
 
 ```
-[25000] Phase 1: fill
-[2025000] Phase 2: drain
-[4025000] Phase 3: random
-[8025000] Phase 4: flush
+Test 1: fill the FIFO
+Test 2: write while full (overflow)
+Test 3: drain the FIFO
+Test 4: read while empty (underflow)
+Test 5: simultaneous read and write
+Test 6: random reads and writes
 
-==================== TEST REPORT ====================
- Writes accepted   : 279
- Reads accepted    : 279
- Left in model     : 0
- Errors            : 0
- Control coverage  : 100.0%
- Fill-level cov.   : 100.0%
+========== TEST REPORT ==========
+ Writes accepted : 199
+ Reads accepted  : 199
+ Errors          : 0
  RESULT: *** PASS ***
-=====================================================
-
-tb_top.dut.u_sva.c_full_hit,      852 attempts, 27 match
-tb_top.dut.u_sva.c_empty_hit,     852 attempts, 32 match
-tb_top.dut.u_sva.c_rw_while_full, 852 attempts, 23 match
+=================================
 ```
 
-* **Scoreboard:** 279 writes and 279 reads were checked, with zero mismatches, and the model was empty at the end.
-* **Assertions:** none fired.
-* **Functional coverage:** both covergroups reached 100%.
-* **Corner cases:** every cover property was hit. The FIFO became full 27 times and empty 32 times, and saw a simultaneous read and write while full 23 times.
+Every written byte was read back in the correct order, the flags always matched the model, and no assertion fired. The exact transfer count changes from run to run because Test 6 uses random values.
 
 ## Running
 
-The testbench uses classes, mailboxes, clocking blocks, SVA and covergroups, so it needs a full SystemVerilog simulator: Questa, VCS, Xcelium, or any of them on [EDA Playground](https://www.edaplayground.com).
+**EDA Playground:** paste `rtl/sync_fifo.sv` into the Design tab and `tb/sync_fifo_tb_simple.sv` into the Testbench tab, choose a SystemVerilog simulator (e.g. Synopsys VCS), set the top module to `tb_top`, and click Run.
+
+**Command line:**
 
 ```bash
+# Synopsys VCS
+vcs -sverilog -full64 rtl/sync_fifo.sv tb/sync_fifo_tb_simple.sv -o simv && ./simv
+
 # Questa
-vlog -sv rtl/sync_fifo.sv tb/sync_fifo_tb.sv
+vlog -sv rtl/sync_fifo.sv tb/sync_fifo_tb_simple.sv
 vsim -c tb_top -do "run -all; quit"
 
-# Synopsys VCS
-vcs -sverilog -full64 rtl/sync_fifo.sv tb/sync_fifo_tb.sv -o simv && ./simv
-
-# Cadence Xcelium
-xrun -sv rtl/sync_fifo.sv tb/sync_fifo_tb.sv
+# Verilator (free)
+verilator --binary --timing --assert -Wno-fatal --top-module tb_top rtl/sync_fifo.sv tb/sync_fifo_tb_simple.sv && ./obj_dir/Vtb_top
 
 # With the planted bug, add the define, e.g.
-vlog -sv +define+INJECT_BUG rtl/sync_fifo.sv tb/sync_fifo_tb.sv
+vcs -sverilog -full64 +define+INJECT_BUG rtl/sync_fifo.sv tb/sync_fifo_tb_simple.sv -o simv && ./simv
 ```
 
-On EDA Playground, set the top module to `tb_top`. The run writes waveforms to `dump.vcd`.
+The run writes waveforms to `dump.vcd`.
+
+## Class-based testbench (`tb/sync_fifo_tb.sv`)
+
+The repo also includes an extended, class-based version of the testbench: generator → mailbox → driver → monitor → scoreboard, connected through an interface with clocking blocks. It adds constrained-random stimulus, five assertions bound into the DUT, and functional coverage, and reached 100% control and fill-level coverage with 0 errors on VCS. Run it the same way, using `tb/sync_fifo_tb.sv` in place of the simple testbench.
 
 ## Repository Layout
+
 ```
-rtl/sync_fifo.sv     FIFO design
-tb/sync_fifo_tb.sv   interface, classes, SVA module, top-level testbench
+rtl/sync_fifo.sv            FIFO design
+tb/sync_fifo_tb_simple.sv   self-checking testbench (main)
+tb/sync_fifo_tb.sv          class-based testbench with coverage
 ```
 
 ## License
+
 GPL-3.0, see `LICENSE`.
