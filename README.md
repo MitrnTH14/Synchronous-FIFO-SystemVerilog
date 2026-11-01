@@ -96,16 +96,11 @@ vcs -sverilog -full64 +define+INJECT_BUG rtl/sync_fifo.sv tb/sync_fifo_tb_simple
 
 The run writes waveforms to `dump.vcd`.
 
-## Class-based testbench (`tb/sync_fifo_tb.sv`)
-
-The repo also includes an extended, class-based version of the testbench: generator → mailbox → driver → monitor → scoreboard, connected through an interface with clocking blocks. It adds constrained-random stimulus, five assertions bound into the DUT, and functional coverage, and reached 100% control and fill-level coverage with 0 errors on VCS. Run it the same way, using `tb/sync_fifo_tb.sv` in place of the simple testbench.
-
 ## Repository Layout
 
 ```
 rtl/sync_fifo.sv            FIFO design
-tb/sync_fifo_tb_simple.sv   self-checking testbench (main)
-tb/sync_fifo_tb.sv          class-based testbench with coverage
+tb/sync_fifo_tb_simple.sv   self-checking testbench
 ```
 
 ## License
