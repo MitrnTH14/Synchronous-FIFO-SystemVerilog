@@ -53,7 +53,7 @@ The testbench checks itself and prints PASS or FAIL, so you don't need to read w
 
 Compiling with `+define+INJECT_BUG` removes the overflow protection, so writes are accepted while the FIFO is full. The testbench then reports data mismatches, flag errors and assertion failures, which shows it really catches design bugs.
 
-## Results (Synopsys VCS X-2025.06-SP1)
+## Results (EDA Playground)
 
 ```
 Test 1: fill the FIFO
@@ -75,26 +75,13 @@ Every written byte was read back in the correct order, the flags always matched 
 
 ## Running
 
-**EDA Playground:** paste `rtl/sync_fifo.sv` into the Design tab and `tb/sync_fifo_tb_simple.sv` into the Testbench tab, choose a SystemVerilog simulator (e.g. Synopsys VCS), set the top module to `tb_top`, and click Run.
+On [EDA Playground](https://www.edaplayground.com):
 
-**Command line:**
+1. Paste `rtl/sync_fifo.sv` into the **Design** pane and `tb/sync_fifo_tb_simple.sv` into the **Testbench** pane.
+2. Pick a SystemVerilog simulator and set the top module to `tb_top`.
+3. Tick **Open EPWave after run** to see the waveform, then click **Run**.
 
-```bash
-# Synopsys VCS
-vcs -sverilog -full64 rtl/sync_fifo.sv tb/sync_fifo_tb_simple.sv -o simv && ./simv
-
-# Questa
-vlog -sv rtl/sync_fifo.sv tb/sync_fifo_tb_simple.sv
-vsim -c tb_top -do "run -all; quit"
-
-# Verilator (free)
-verilator --binary --timing --assert -Wno-fatal --top-module tb_top rtl/sync_fifo.sv tb/sync_fifo_tb_simple.sv && ./obj_dir/Vtb_top
-
-# With the planted bug, add the define, e.g.
-vcs -sverilog -full64 +define+INJECT_BUG rtl/sync_fifo.sv tb/sync_fifo_tb_simple.sv -o simv && ./simv
-```
-
-The run writes waveforms to `dump.vcd`.
+To try the planted bug, add `+define+INJECT_BUG` to the **Compile Options** box and run again.
 
 ## Repository Layout
 
